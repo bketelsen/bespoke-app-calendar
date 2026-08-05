@@ -1,0 +1,67 @@
+package views
+
+import (
+	"fmt"
+	"github.com/bketelsen/bespoke/pkg/auth"
+	"github.com/bketelsen/bespoke/pkg/ui"
+	"github.com/bketelsen/bespoke/pkg/ui/components/button"
+	"github.com/bketelsen/bespoke/pkg/ui/components/card"
+)
+
+templ Settings(user auth.User, accounts []Account, vaultReady, googleReady bool, notice, problem string) {
+	@ui.AppShell(ui.ShellProps{Title:"Calendar accounts", User:user, Width:ui.ShellWidthWide}) {
+		<div class="mx-auto max-w-3xl space-y-5">
+			<a href="/" class="text-sm text-primary">← Calendar</a>
+			<div><h1 class="text-2xl font-semibold">Calendar accounts</h1><p class="text-sm text-muted-foreground">Google uses Calendar OAuth. iCloud uses a revocable app-specific password.</p></div>
+			if notice != "" {
+				<div class="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">{ notice }</div>
+			}
+			if problem != "" {
+				<div class="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{ problem }</div>
+			}
+			for _, a := range accounts {
+				@card.Card() {
+					@card.Content(card.ContentProps{Class:"flex flex-wrap items-center gap-3 pt-6"}) {
+					<div class="min-w-0 flex-1">
+						<div class="font-medium">{ a.Email }</div>
+						<div class="text-xs capitalize text-muted-foreground">{ a.Provider } · { a.Status }</div>
+						if a.StatusDetail != "" {
+							<div class="text-xs text-muted-foreground">{ a.StatusDetail }</div>
+						}
+					</div>
+					<form method="post" action={ templ.SafeURL(fmt.Sprintf("/settings/accounts/%d/sync",a.ID)) }>@button.Button(button.Props{Type:button.TypeSubmit,Variant:button.VariantOutline}) { Sync }</form>
+					<form method="post" action={ templ.SafeURL(fmt.Sprintf("/settings/accounts/%d/disconnect",a.ID)) }>@button.Button(button.Props{Type:button.TypeSubmit,Variant:button.VariantDestructive}) { Disconnect }</form>
+					}
+				}
+			}
+			<div class="grid gap-5 md:grid-cols-2">
+				@card.Card() {
+					@card.Header() { @card.Title() { Google Calendar } @card.Description() { Authorize access to calendars and events. } }
+					@card.Content() {
+						if googleReady && vaultReady {
+							<a href="/oauth/google/start" class="inline-flex rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">Sign in with Google</a>
+						} else {
+							<p class="text-sm text-destructive">Calendar Google OAuth is not configured.</p>
+						}
+					}
+				}
+				@card.Card() {
+					@card.Header() { @card.Title() { iCloud Calendar } @card.Description() { Use your Apple ID and an app-specific password. } }
+					@card.Content() {
+						<form method="post" action="/settings/accounts/icloud" class="space-y-3"><input type="email" name="email" required placeholder="you@icloud.com" class="w-full rounded-md border bg-background px-3 py-2"/><input type="password" name="password" required autocomplete="new-password" placeholder="App-specific password" class="w-full rounded-md border bg-background px-3 py-2"/>@button.Button(button.Props{Type:button.TypeSubmit,Disabled:!vaultReady}) { Add iCloud }</form>
+					}
+				}
+			</div>
+		</div>
+	}
+}
+
+templ DashCard(next string, count int) {
+	<div><div class="font-semibold">
+		if next != "" {
+			<span>{ next }</span>
+		} else {
+			<span>No more events today</span>
+		}
+	</div><div class="text-sm text-muted-foreground">{ fmt.Sprintf("%d remaining today",count) }</div></div>
+}

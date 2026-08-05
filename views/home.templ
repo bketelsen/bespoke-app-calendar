@@ -1,0 +1,213 @@
+package views
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/bketelsen/bespoke/pkg/auth"
+	"github.com/bketelsen/bespoke/pkg/ui"
+	"github.com/bketelsen/bespoke/pkg/ui/components/button"
+	"github.com/bketelsen/bespoke/pkg/ui/components/card"
+)
+
+templ Home(user auth.User, data PageData) {
+	@ui.AppShell(ui.ShellProps{Title: "Calendar", User: user, Width: ui.ShellWidthWide}) {
+		<div class="mx-auto max-w-6xl space-y-5">
+			<header class="flex flex-wrap items-center gap-3">
+				<div class="min-w-0 flex-1"><h1 class="text-2xl font-semibold tracking-tight">Calendar</h1><p class="text-sm text-muted-foreground">{ data.Date.Format("Monday, January 2, 2006") }</p></div>
+				<a href="/settings" class="rounded-md border px-3 py-2 text-sm">Accounts</a>
+				<a href="#new-event" class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground">New event</a>
+			</header>
+			<nav class="flex flex-wrap items-center gap-2" aria-label="Calendar navigation">
+				<a href={ templ.SafeURL(navURL(data.View, data.Date, -1)) } class="rounded-md border px-3 py-2">←</a>
+				<a href={ templ.SafeURL("/?view="+data.View) } class="rounded-md border px-3 py-2 text-sm">Today</a>
+				<a href={ templ.SafeURL(navURL(data.View, data.Date, 1)) } class="rounded-md border px-3 py-2">→</a>
+				<div class="ml-auto flex rounded-md border p-1">
+					for _, view := range []string{"agenda","day","week","month"} {
+						<a href={ templ.SafeURL("/?view="+view+"&date="+data.Date.Format("2006-01-02")) } class={ "rounded px-3 py-1.5 text-sm capitalize", templ.KV("bg-muted font-medium", data.View == view) }>{ view }</a>
+					}
+				</div>
+			</nav>
+			<div id="calendar-live" data-init="@get('/_live')">
+				@EventsLive(data)
+			</div>
+			@EventForm(data.Calendars, data.Selected)
+		</div>
+	}
+}
+
+templ EventsLive(data PageData) {
+	<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_16rem]">
+		<div class="min-w-0">
+			switch data.View {
+				case "day":
+					@TimeGrid(data, []time.Time{dayStart(data.Date)})
+				case "week":
+					@TimeGrid(data, weekDays(data.Date))
+				case "month":
+					@MonthGrid(data)
+				default:
+					@AgendaList(data)
+			}
+		</div>
+		<aside class="space-y-4">
+			@card.Card() { @card.Header() { @card.Title() { Calendars } } @card.Content() {
+				<form method="post" action="/calendars/selection" class="space-y-3">
+					for _, c := range data.Calendars {
+						<label class="flex min-h-11 items-center gap-2 text-sm">
+							<input type="checkbox" name="calendar" value={ fmt.Sprint(c.ID) } checked?={ c.Selected }/>
+							<span class="size-3 shrink-0 rounded-full" style={ templ.SafeCSS("background-color:"+c.Color) }></span>
+							<span class="min-w-0">
+								<span class="block truncate">{ c.Name }</span>
+								<span class="block truncate text-xs capitalize text-muted-foreground">{ providerName(c.Provider) } · { c.Email }</span>
+							</span>
+						</label>
+					}
+					@button.Button(button.Props{Type:button.TypeSubmit,Variant:button.VariantOutline,Class:"w-full"}) { Apply }
+				</form>
+			} }
+		</aside>
+	</div>
+}
+
+templ AgendaList(data PageData) {
+	<div class="space-y-2">
+		if len(data.Events) == 0 {
+			@card.Card() { @card.Content(card.ContentProps{Class:"py-10 text-center text-sm text-muted-foreground"}) { No events in this range. } }
+		}
+		for _, e := range data.Events {
+			<a id={ fmt.Sprintf("event-%d", e.ID) } href={ eventURL(data, e) } class="block rounded-lg border bg-card p-4 transition-colors hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-ring">
+				<div class="flex gap-3">
+					<span class="mt-1 size-3 shrink-0 rounded-full" style={ templ.SafeCSS("background-color:"+e.Color) }></span>
+					<div class="min-w-0 flex-1"><div class="font-medium">{ e.Title }</div><div class="mt-1 text-sm text-muted-foreground">{ eventDay(e) } · { e.When() }
+						if e.Location != "" {
+							<span> · { e.Location }</span>
+						}
+					</div><div class="mt-1 text-xs text-muted-foreground">{ e.Calendar }
+						if e.Dirty {
+							<span> · waiting to sync</span>
+						}
+					</div></div>
+				</div>
+			</a>
+		}
+	</div>
+}
+
+templ TimeGrid(data PageData, days []time.Time) {
+	<div class="overflow-x-auto rounded-lg border bg-card">
+		<div class={ "min-w-[46rem]", templ.KV("min-w-[68rem]", len(days) > 1) }>
+			<div class="sticky top-0 z-20 grid border-b bg-card" style={ templ.SafeCSS(timeGridColumns(len(days))) }>
+				<div class="border-r p-2 text-xs text-muted-foreground">All day</div>
+				for _, day := range days {
+					<div class={ "border-r p-2 text-center", templ.KV("bg-primary/5", sameDay(day,time.Now())) }><div class="text-xs uppercase text-muted-foreground">{ day.Format("Mon") }</div><div class={ "mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-lg", templ.KV("bg-primary text-primary-foreground", sameDay(day,time.Now())) }>{ day.Format("2") }</div></div>
+				}
+			</div>
+			<div class="grid border-b" style={ templ.SafeCSS(timeGridColumns(len(days))) }>
+				<div class="border-r p-2"></div>
+				for _, day := range days {
+					<div class="min-h-10 border-r p-1">
+						for _, e := range allDayEvents(data.Events,day) {
+							<a href={ eventURL(data,e) } class="mb-1 block truncate rounded px-2 py-1 text-xs text-white" style={ templ.SafeCSS("background-color:"+e.Color) }>{ e.Title }</a>
+						}
+					</div>
+				}
+			</div>
+			<div class="grid" style={ templ.SafeCSS(timeGridColumns(len(days))) }>
+				<div class="border-r bg-card">
+					for hour := 0; hour < 24; hour++ {
+						<div class="h-12 -translate-y-2 pr-2 text-right text-[11px] text-muted-foreground">{ hourLabel(hour) }</div>
+					}
+				</div>
+				for _, day := range days {
+					<div class={ "relative border-r bg-[repeating-linear-gradient(to_bottom,transparent_0,transparent_47px,hsl(var(--border))_48px)]", templ.KV("bg-primary/[0.02]", sameDay(day,time.Now())) } style="height:1152px">
+						for _, e := range timedEvents(data.Events,day) {
+							<a id={ fmt.Sprintf("event-%d",e.ID) } href={ eventURL(data,e) } class="absolute inset-x-1 z-10 overflow-hidden rounded border-l-4 bg-primary/10 px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-ring" style={ templ.SafeCSS(timedEventStyle(e)) }><span class="block truncate font-medium">{ e.Title }</span><span class="block truncate text-[11px] text-muted-foreground">{ e.When() }</span></a>
+						}
+						if sameDay(day,time.Now()) {
+							<div class="pointer-events-none absolute inset-x-0 z-20 border-t-2 border-destructive" style={ templ.SafeCSS(nowLineStyle()) }><span class="absolute -left-1 -top-1.5 size-2.5 rounded-full bg-destructive"></span></div>
+						}
+					</div>
+				}
+			</div>
+		</div>
+	</div>
+}
+
+templ MonthGrid(data PageData) {
+	<div class="overflow-x-auto rounded-lg border bg-card">
+		<div class="min-w-[48rem]">
+			<div class="grid grid-cols-7 border-b bg-muted/30">
+				for _, name := range []string{"Sun","Mon","Tue","Wed","Thu","Fri","Sat"} {
+					<div class="border-r p-2 text-center text-xs font-medium uppercase text-muted-foreground">{ name }</div>
+				}
+			</div>
+			<div class="grid grid-cols-7">
+				for _, day := range monthDays(data.Date) {
+					<div class={ "min-h-32 border-b border-r p-1.5", templ.KV("bg-muted/20 text-muted-foreground", day.Month()!=data.Date.Month()), templ.KV("bg-primary/[0.03]", sameDay(day,time.Now())) }>
+						<a href={ templ.SafeURL("/?view=day&date="+day.Format("2006-01-02")) } class={ "mb-1 flex size-7 items-center justify-center rounded-full text-sm", templ.KV("bg-primary font-medium text-primary-foreground",sameDay(day,time.Now())) }>{ day.Format("2") }</a>
+						for _, e := range limitedEvents(eventsOnDay(data.Events,day), 3) {
+							<a href={ eventURL(data,e) } class="mb-1 flex items-center gap-1 truncate rounded px-1 py-0.5 text-xs hover:bg-muted"><span class="size-2 shrink-0 rounded-full" style={ templ.SafeCSS("background-color:"+e.Color) }></span><span class="truncate">{ monthEventLabel(e) }</span></a>
+						}
+						if count := len(eventsOnDay(data.Events,day)); count > 3 {
+							<a href={ templ.SafeURL("/?view=day&date="+day.Format("2006-01-02")) } class="text-xs text-muted-foreground hover:underline">{ fmt.Sprintf("+%d more",count-3) }</a>
+						}
+					</div>
+				}
+			</div>
+		</div>
+	</div>
+}
+
+templ EventForm(calendars []Calendar, event *Event) {
+	<section id="new-event" class="rounded-lg border bg-card p-5">
+		<h2 class="text-lg font-semibold">
+			if event == nil {
+				<span>New event</span>
+			} else {
+				<span>Edit event</span>
+			}
+		</h2>
+		<form method="post" action={ templ.SafeURL(eventAction(event)) } class="mt-4 grid gap-4 md:grid-cols-2">
+			<label class="space-y-1 text-sm"><span>Calendar</span><select name="calendar_id" required class="w-full rounded-md border bg-background px-3 py-2">
+				for _, c := range calendars {
+					if c.Writable {
+						<option value={ fmt.Sprint(c.ID) } selected?={ event != nil && event.CalendarID == c.ID }>{ c.Name } · { providerName(c.Provider) } · { c.Email }</option>
+					}
+				}
+			</select></label>
+			<label class="space-y-1 text-sm"><span>Title</span><input name="title" required value={ eventValue(event,"title") } class="w-full rounded-md border bg-background px-3 py-2"/></label>
+			<label class="space-y-1 text-sm"><span>Starts</span><input type="datetime-local" name="start" required value={ eventValue(event,"start") } class="w-full rounded-md border bg-background px-3 py-2"/></label>
+			<label class="space-y-1 text-sm"><span>Ends</span><input type="datetime-local" name="end" required value={ eventValue(event,"end") } class="w-full rounded-md border bg-background px-3 py-2"/></label>
+			<label class="space-y-1 text-sm"><span>Location</span><input name="location" value={ eventValue(event,"location") } class="w-full rounded-md border bg-background px-3 py-2"/></label>
+			<label class="space-y-1 text-sm"><span>Repeat</span><select name="recurrence" class="w-full rounded-md border bg-background px-3 py-2"><option value="">Does not repeat</option><option value="RRULE:FREQ=DAILY">Daily</option><option value="RRULE:FREQ=WEEKLY">Weekly</option><option value="RRULE:FREQ=MONTHLY">Monthly</option><option value="RRULE:FREQ=YEARLY">Yearly</option></select></label>
+			<label class="space-y-1 text-sm md:col-span-2"><span>Description</span><textarea name="description" rows="3" class="w-full rounded-md border bg-background px-3 py-2">{ eventValue(event,"description") }</textarea></label>
+			<div class="flex flex-wrap gap-3 md:col-span-2">
+				@button.Button(button.Props{Type:button.TypeSubmit}) { Save event }
+				if event != nil {
+					<button formmethod="post" formaction={ templ.SafeURL(fmt.Sprintf("/events/%d/delete",event.ID)) } class="rounded-md bg-destructive px-4 py-2 text-sm text-destructive-foreground">Delete series</button>
+				}
+			</div>
+		</form>
+	</section>
+}
+
+func eventDay(e Event) string { if e.AllDay() { if t,err:=time.Parse("2006-01-02",e.StartDate);err==nil{return t.Format("Mon, Jan 2")} };return e.Start.Local().Format("Mon, Jan 2") }
+func navURL(view string,date time.Time,delta int) string { if view=="month"{date=date.AddDate(0,delta,0)}else if view=="week"{date=date.AddDate(0,0,7*delta)}else{date=date.AddDate(0,0,delta)};return fmt.Sprintf("/?view=%s&date=%s",view,date.Format("2006-01-02")) }
+func eventAction(e *Event) string { if e==nil{return "/events"};return fmt.Sprintf("/events/%d",e.ID) }
+func eventValue(e *Event,field string) string { if e==nil{if field=="start"{return time.Now().Add(time.Hour).Truncate(30*time.Minute).Format("2006-01-02T15:04")};if field=="end"{return time.Now().Add(2*time.Hour).Truncate(30*time.Minute).Format("2006-01-02T15:04")};return ""};switch field{case"title":return e.Title;case"description":return e.Description;case"location":return e.Location;case"start":return e.Start.Local().Format("2006-01-02T15:04");case"end":return e.End.Local().Format("2006-01-02T15:04")};return "" }
+func providerName(provider string) string { if provider == "gmail" { return "Google" }; if provider == "icloud" { return "iCloud" }; return provider }
+func dayStart(t time.Time) time.Time { y,m,d:=t.Date();return time.Date(y,m,d,0,0,0,0,time.Local) }
+func sameDay(a,b time.Time) bool { ay,am,ad:=a.In(time.Local).Date();by,bm,bd:=b.In(time.Local).Date();return ay==by&&am==bm&&ad==bd }
+func weekDays(date time.Time) []time.Time { start:=dayStart(date).AddDate(0,0,-int(date.Weekday()));out:=make([]time.Time,7);for i:=range out{out[i]=start.AddDate(0,0,i)};return out }
+func monthDays(date time.Time) []time.Time { first:=time.Date(date.Year(),date.Month(),1,0,0,0,0,time.Local);start:=first.AddDate(0,0,-int(first.Weekday()));out:=make([]time.Time,42);for i:=range out{out[i]=start.AddDate(0,0,i)};return out }
+func eventURL(data PageData,e Event) templ.SafeURL { return templ.SafeURL(fmt.Sprintf("/?view=%s&date=%s&event=%d",data.View,data.Date.Format("2006-01-02"),e.ID)) }
+func timeGridColumns(days int) string { return fmt.Sprintf("grid-template-columns:4.5rem repeat(%d,minmax(0,1fr))",days) }
+func hourLabel(hour int) string { return time.Date(2000,1,1,hour,0,0,0,time.Local).Format("3 PM") }
+func allDayEvents(events []Event,day time.Time) []Event { var out []Event;for _,e:=range events{if !e.AllDay(){continue};start,err1:=time.ParseInLocation("2006-01-02",e.StartDate,time.Local);end,err2:=time.ParseInLocation("2006-01-02",e.EndDate,time.Local);if err1==nil&&err2==nil&&!day.Before(start)&&day.Before(end){out=append(out,e)}};return out }
+func timedEvents(events []Event,day time.Time) []Event { var out []Event;for _,e:=range events{if !e.AllDay()&&sameDay(e.Start,day){out=append(out,e)}};return out }
+func timedEventStyle(e Event) string { local:=e.Start.Local();minutes:=local.Hour()*60+local.Minute();duration:=e.End.Sub(e.Start).Minutes();if duration<20{duration=20};if duration>1440-float64(minutes){duration=1440-float64(minutes)};return fmt.Sprintf("top:%.1fpx;height:%.1fpx;border-left-color:%s",float64(minutes)*0.8,duration*0.8,e.Color) }
+func nowLineStyle() string { now:=time.Now();return fmt.Sprintf("top:%.1fpx",float64(now.Hour()*60+now.Minute())*0.8) }
+func eventsOnDay(events []Event,day time.Time) []Event { out:=timedEvents(events,day);return append(allDayEvents(events,day),out...) }
+func limitedEvents(events []Event,n int) []Event { if len(events)>n{return events[:n]};return events }
+func monthEventLabel(e Event) string { if e.AllDay(){return e.Title};return e.Start.Local().Format("3:04 ")+e.Title }

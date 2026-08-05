@@ -1,0 +1,14 @@
+# Copy to <your-instance>/apps/calendar/app.toml — the directory name must be
+# `calendar`, which is also this app's database, process, and subdomain name.
+# `port` is yours to choose: any free port in 4101-4999.
+port        = 4111
+name        = "Calendar"
+slug        = "calendar"
+icon        = "calendar-days"
+description = "A private calendar for Google and iCloud"
+package     = "github.com/bketelsen/bespoke-app-calendar"
+
+[[intents]]
+name    = "create-event"
+title   = "Create Calendar Event"
+accepts = "text"
