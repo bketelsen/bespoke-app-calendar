@@ -18,6 +18,7 @@ import (
 	"github.com/bketelsen/bespoke-app-calendar/views"
 	"github.com/bketelsen/bespoke/pkg/auth"
 	"github.com/bketelsen/bespoke/pkg/db"
+	"github.com/bketelsen/bespoke/pkg/events"
 	"github.com/bketelsen/bespoke/pkg/web"
 )
 
@@ -168,6 +169,7 @@ func main() {
 				redirectSettings(w, r, "", err)
 				return
 			}
+			publishAccountConnected(r.Context(), sqldb, user, id)
 			if err := queueSync(user.Login, id); err != nil {
 				redirectSettings(w, r, "", err)
 				return
@@ -182,6 +184,7 @@ func main() {
 				redirectSettings(w, r, "", err)
 				return
 			}
+			publishAccountConnected(r.Context(), sqldb, user, id)
 			if err := queueSync(user.Login, id); err != nil {
 				redirectSettings(w, r, "", err)
 				return
@@ -201,7 +204,10 @@ func main() {
 		})
 		mux.HandleFunc("POST /settings/accounts/{id}/disconnect", func(w http.ResponseWriter, r *http.Request) {
 			user := auth.FromContext(r.Context())
-			res, err := sqldb.ExecContext(r.Context(), `DELETE FROM accounts WHERE id=? AND login=?`, r.PathValue("id"), user.Login)
+			id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+			var provider, email string
+			_ = sqldb.QueryRowContext(r.Context(), `SELECT provider,email FROM accounts WHERE id=? AND login=?`, id, user.Login).Scan(&provider, &email)
+			res, err := sqldb.ExecContext(r.Context(), `DELETE FROM accounts WHERE id=? AND login=?`, id, user.Login)
 			if err != nil {
 				redirectSettings(w, r, "", err)
 				return
@@ -210,6 +216,7 @@ func main() {
 				http.NotFound(w, r)
 				return
 			}
+			publishEvent(r.Context(), user, events.Event{Type: "calendar.account.disconnected", SubjectID: fmt.Sprint(id), Data: map[string]any{"account_id": id, "provider": provider, "email": email}, Notification: &events.Notification{Title: "Calendar account disconnected", Body: clip(email+" was disconnected and its locally synced calendars and events were removed.", 500), AppSlug: "calendar", Path: "/settings"}})
 			web.Changed(user.Login)
 			redirectSettings(w, r, "Calendar account disconnected.", nil)
 		})
@@ -290,7 +297,9 @@ func mutateEvent(w http.ResponseWriter, r *http.Request, db *sql.DB, id int64, q
 	}
 	calID, _ := strconv.ParseInt(r.FormValue("calendar_id"), 10, 64)
 	in := eventInput{CalendarID: calID, Title: r.FormValue("title"), Description: r.FormValue("description"), Location: r.FormValue("location"), Start: start, End: end, Timezone: time.Local.String(), Recurrence: r.FormValue("recurrence")}
+	typ := "calendar.event.updated"
 	if id == 0 {
+		typ = "calendar.event.created"
 		id, err = createLocalEvent(r.Context(), db, user.Login, in)
 	} else {
 		err = updateLocalEvent(r.Context(), db, user.Login, id, in)
@@ -300,6 +309,7 @@ func mutateEvent(w http.ResponseWriter, r *http.Request, db *sql.DB, id int64, q
 		return
 	}
 	web.Changed(user.Login)
+	publishMutation(r.Context(), user, typ, id, in, "ui")
 	queueEventAccount(r.Context(), db, user.Login, id, queue)
 	http.Redirect(w, r, fmt.Sprintf("/?event=%d", id), http.StatusSeeOther)
 }

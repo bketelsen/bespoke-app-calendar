@@ -11,8 +11,8 @@ github.com/a-h/templ v0.3.1020/go.mod h1:A2DlK61v+K+NRoGnhmYbNYVmtYHcFO5/AisMvBd
 github.com/andybalholm/brotli v1.0.5/go.mod h1:fO7iG3H7G2nSZ7m0zPUDn85XEX2GTukHGRSepvi9Eig=
 github.com/andybalholm/brotli v1.2.0 h1:ukwgCxwYrmACq68yiUqwIWnGY0cTPox/M94sVwToPjQ=
 github.com/andybalholm/brotli v1.2.0/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
-github.com/bketelsen/bespoke v0.10.0 h1:chXL+mUWQVDgZtDkOoCYkweoUmcVVewflgUvNHz2TTk=
-github.com/bketelsen/bespoke v0.10.0/go.mod h1:qvwYEGpt0j/ZDYEnx3FwgbDAMvcFwjUPjLJmOVOaJ5s=
+github.com/bketelsen/bespoke v0.13.0 h1:krrb63J8BC5urcntWargfbBybQHjfYdmRI3P9Dr2A9I=
+github.com/bketelsen/bespoke v0.13.0/go.mod h1:YvuuEGq4boamCrN8NxJjGyhfqIddJKTtNTHCkmBeX18=
 github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=
 github.com/cenkalti/backoff/v4 v4.3.0/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
 github.com/cli/browser v1.3.0 h1:LejqCrpWr+1pRqmEPDGnTZOjsMe7sehifLynZJuqJpo=

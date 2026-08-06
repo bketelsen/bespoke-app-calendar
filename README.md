@@ -9,7 +9,7 @@ before installing it, the same as any code you run as yourself.
 
 ## Install
 
-From your Bespoke instance directory, with the platform at v0.10.0 or newer:
+From your Bespoke instance directory, with the platform at v0.13.0 or newer:
 
 ```sh
 go tool bespoke add calendar
@@ -30,6 +30,9 @@ process, and subdomain, and the source picks it.
 - **Talks to** Google (`accounts.google.com`, `oauth2.googleapis.com`,
   `www.googleapis.com`) and Apple (`caldav.icloud.com`) — only the accounts you
   connect, and only to sync calendars and events.
+- **Publishes** domain events and in-app notifications to your own platformd
+  (sync failures, newly imported events, account disconnects) — they never
+  leave your instance.
 - **Never** sends your calendar anywhere else.
 
 Set `BESPOKE_CALENDAR_KEY` (32 random bytes, base64) and the Google OAuth client
@@ -125,7 +128,9 @@ Destructive tools require an explicit user request.
 ### Non-goals for v1
 
 - Sending invitations, managing attendees, or responding to invitations.
-- Notifications, reminders, travel-time alerts, or free/busy scheduling.
+- Reminders, travel-time alerts, or free/busy scheduling. The app does publish
+  platform events with in-app notifications for sync failures, imported
+  events, and account disconnects.
 - Resource/room booking, attachments, conferencing administration, or task
   management.
 - Per-occurrence editing or deletion within a recurring series.

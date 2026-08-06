@@ -181,7 +181,7 @@ func (s *synchronizer) googleRequest(ctx context.Context, cred accountCredential
 	return nil
 }
 
-func (s *synchronizer) syncGoogle(ctx context.Context, a syncAccount, cred accountCredential) error {
+func (s *synchronizer) syncGoogle(ctx context.Context, a syncAccount, cred accountCredential, imp *importPublisher) error {
 	cred, err := s.freshGoogle(ctx, a, cred)
 	if err != nil {
 		return err
@@ -199,14 +199,14 @@ func (s *synchronizer) syncGoogle(ctx context.Context, a syncAccount, cred accou
 		if err != nil {
 			return err
 		}
-		if err = s.pullGoogleEvents(ctx, cred, cid, rc.ID); err != nil {
+		if err = s.pullGoogleEvents(ctx, cred, cid, rc.ID, rc.Summary, imp); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *synchronizer) pullGoogleEvents(ctx context.Context, cred accountCredential, calendarID int64, remote string) error {
+func (s *synchronizer) pullGoogleEvents(ctx context.Context, cred accountCredential, calendarID int64, remote, calendar string, imp *importPublisher) error {
 	from := time.Now().AddDate(-1, 0, 0).UTC().Format(time.RFC3339)
 	to := time.Now().AddDate(2, 0, 0).UTC().Format(time.RFC3339)
 	token := ""
@@ -224,7 +224,7 @@ func (s *synchronizer) pullGoogleEvents(ctx context.Context, cred accountCredent
 				_, _ = s.db.ExecContext(ctx, `DELETE FROM events WHERE calendar_id=? AND remote_id=? AND dirty=0`, calendarID, e.ID)
 				continue
 			}
-			if err := storeGoogleEvent(ctx, s.db, calendarID, e); err != nil {
+			if err := storeGoogleEvent(ctx, s.db, calendarID, e, calendar, imp); err != nil {
 				return err
 			}
 		}
@@ -235,13 +235,15 @@ func (s *synchronizer) pullGoogleEvents(ctx context.Context, cred accountCredent
 	}
 }
 
-func storeGoogleEvent(ctx context.Context, db *sql.DB, calendarID int64, e googleEvent) error {
+func storeGoogleEvent(ctx context.Context, db *sql.DB, calendarID int64, e googleEvent, calendar string, imp *importPublisher) error {
+	var st time.Time
 	var start, end, startDate, endDate any
 	if e.Start.Date != "" {
 		startDate = e.Start.Date
 		endDate = e.End.Date
 	} else {
-		st, err := time.Parse(time.RFC3339, e.Start.DateTime)
+		var err error
+		st, err = time.Parse(time.RFC3339, e.Start.DateTime)
 		if err != nil {
 			return nil
 		}
@@ -252,8 +254,19 @@ func storeGoogleEvent(ctx context.Context, db *sql.DB, calendarID int64, e googl
 		start = st.UTC().Format(time.RFC3339Nano)
 		end = et.UTC().Format(time.RFC3339Nano)
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO events(calendar_id,remote_id,title,description,location,start_at,end_at,start_date,end_date,timezone,recurrence,status,dirty) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(calendar_id,remote_id) DO UPDATE SET title=excluded.title,description=excluded.description,location=excluded.location,start_at=excluded.start_at,end_at=excluded.end_at,start_date=excluded.start_date,end_date=excluded.end_date,timezone=excluded.timezone,recurrence=excluded.recurrence,status=excluded.status,updated_at=datetime('now') WHERE events.dirty=0`, calendarID, e.ID, e.Summary, e.Description, e.Location, start, end, startDate, endDate, e.Start.TimeZone, strings.Join(e.Recurrence, "\n"), e.Status)
-	return err
+	// Rows already present — including locally created events whose push
+	// rewrote remote_id and echoes back here — are updates, never imports.
+	var existing int64
+	known := db.QueryRowContext(ctx, `SELECT id FROM events WHERE calendar_id=? AND remote_id=?`, calendarID, e.ID).Scan(&existing) == nil
+	res, err := db.ExecContext(ctx, `INSERT INTO events(calendar_id,remote_id,title,description,location,start_at,end_at,start_date,end_date,timezone,recurrence,status,dirty) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(calendar_id,remote_id) DO UPDATE SET title=excluded.title,description=excluded.description,location=excluded.location,start_at=excluded.start_at,end_at=excluded.end_at,start_date=excluded.start_date,end_date=excluded.end_date,timezone=excluded.timezone,recurrence=excluded.recurrence,status=excluded.status,updated_at=datetime('now') WHERE events.dirty=0`, calendarID, e.ID, e.Summary, e.Description, e.Location, start, end, startDate, endDate, e.Start.TimeZone, strings.Join(e.Recurrence, "\n"), e.Status)
+	if err != nil {
+		return err
+	}
+	if !known {
+		id, _ := res.LastInsertId()
+		imp.imported(ctx, id, e.Summary, calendar, st, e.Start.Date)
+	}
+	return nil
 }
 
 func (s *synchronizer) pushGoogle(ctx context.Context, a syncAccount, cred accountCredential) error {

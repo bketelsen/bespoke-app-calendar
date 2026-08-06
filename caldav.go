@@ -90,7 +90,7 @@ func davURL(raw, email string) (string, error) {
 	return u.String(), nil
 }
 
-func (s *synchronizer) syncICloud(ctx context.Context, a syncAccount, cred accountCredential) error {
+func (s *synchronizer) syncICloud(ctx context.Context, a syncAccount, cred accountCredential, imp *importPublisher) error {
 	client := &http.Client{Timeout: 45 * time.Second}
 	base, _ := davURL(icloudCalDAV+"/", a.Email)
 	principalBody := `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>`
@@ -157,7 +157,7 @@ func (s *synchronizer) syncICloud(ctx context.Context, a syncAccount, cred accou
 		if err != nil {
 			return err
 		}
-		if err = s.pullCalDAV(ctx, cred, client, cid, href); err != nil {
+		if err = s.pullCalDAV(ctx, cred, client, cid, href, name, imp); err != nil {
 			return err
 		}
 	}
@@ -200,7 +200,7 @@ func stripUser(raw string) string {
 	return raw
 }
 
-func (s *synchronizer) pullCalDAV(ctx context.Context, cred accountCredential, client *http.Client, calendarID int64, href string) error {
+func (s *synchronizer) pullCalDAV(ctx context.Context, cred accountCredential, client *http.Client, calendarID int64, href, calendar string, imp *importPublisher) error {
 	from := time.Now().AddDate(-1, 0, 0).UTC().Format("20060102T150405Z")
 	to := time.Now().AddDate(2, 0, 0).UTC().Format("20060102T150405Z")
 	body := fmt.Sprintf(`<?xml version="1.0"?><c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><d:getetag/><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="%s" end="%s"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`, from, to)
@@ -219,7 +219,7 @@ func (s *synchronizer) pullCalDAV(ctx context.Context, cred accountCredential, c
 		}
 		ev.ETag = p.ETag
 		ev.Href = r.Href
-		if err = storeICSEvent(ctx, s.db, calendarID, ev); err != nil {
+		if err = storeICSEvent(ctx, s.db, calendarID, ev, calendar, imp); err != nil {
 			return err
 		}
 	}
@@ -331,7 +331,7 @@ func escapeICS(v string) string {
 	r := strings.NewReplacer(`\`, `\\`, "\n", `\n`, ",", `\,`, ";", `\;`)
 	return r.Replace(v)
 }
-func storeICSEvent(ctx context.Context, db *sql.DB, cid int64, e icsEvent) error {
+func storeICSEvent(ctx context.Context, db *sql.DB, cid int64, e icsEvent, calendar string, imp *importPublisher) error {
 	var start, end, startDate, endDate any
 	if e.StartDate != "" {
 		startDate = e.StartDate
@@ -340,8 +340,20 @@ func storeICSEvent(ctx context.Context, db *sql.DB, cid int64, e icsEvent) error
 		start = e.Start
 		end = e.End
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO events(calendar_id,remote_id,etag,title,description,location,start_at,end_at,start_date,end_date,timezone,recurrence,status,dirty) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(calendar_id,remote_id) DO UPDATE SET etag=excluded.etag,title=excluded.title,description=excluded.description,location=excluded.location,start_at=excluded.start_at,end_at=excluded.end_at,start_date=excluded.start_date,end_date=excluded.end_date,timezone=excluded.timezone,recurrence=excluded.recurrence,status=excluded.status,updated_at=datetime('now') WHERE events.dirty=0`, cid, e.UID, e.ETag, e.Summary, e.Description, e.Location, start, end, startDate, endDate, e.Timezone, e.Recurrence, e.Status)
-	return err
+	// Rows already present — including locally created events whose push
+	// rewrote remote_id and echoes back here — are updates, never imports.
+	var existing int64
+	known := db.QueryRowContext(ctx, `SELECT id FROM events WHERE calendar_id=? AND remote_id=?`, cid, e.UID).Scan(&existing) == nil
+	res, err := db.ExecContext(ctx, `INSERT INTO events(calendar_id,remote_id,etag,title,description,location,start_at,end_at,start_date,end_date,timezone,recurrence,status,dirty) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(calendar_id,remote_id) DO UPDATE SET etag=excluded.etag,title=excluded.title,description=excluded.description,location=excluded.location,start_at=excluded.start_at,end_at=excluded.end_at,start_date=excluded.start_date,end_date=excluded.end_date,timezone=excluded.timezone,recurrence=excluded.recurrence,status=excluded.status,updated_at=datetime('now') WHERE events.dirty=0`, cid, e.UID, e.ETag, e.Summary, e.Description, e.Location, start, end, startDate, endDate, e.Timezone, e.Recurrence, e.Status)
+	if err != nil {
+		return err
+	}
+	if !known {
+		id, _ := res.LastInsertId()
+		st, _ := time.Parse(time.RFC3339Nano, e.Start)
+		imp.imported(ctx, id, e.Summary, calendar, st, e.StartDate)
+	}
+	return nil
 }
 
 func (s *synchronizer) pushCalDAV(ctx context.Context, a syncAccount, cred accountCredential, client *http.Client) error {

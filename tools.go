@@ -21,7 +21,7 @@ func schema(props map[string]any, required ...string) map[string]any {
 	return s
 }
 func registerTools(mux *http.ServeMux, db *sql.DB, syncer *synchronizer, queue func(string, int64) error) {
-	web.Tool(mux, web.ToolDef{Name: "list_accounts", Description: "List connected Google and iCloud calendar accounts with sync health. Never returns credentials.", Schema: schema(map[string]any{}), Handler: func(ctx context.Context, user auth.User, args json.RawMessage) (string, error) {
+	web.Tool(mux, web.ToolDef{Name: "list_accounts", Description: "List connected Google and iCloud calendar accounts with sync health. Never returns credentials.", Schema: schema(map[string]any{}), Automation: web.AutomationPolicy{Mode: web.AutomationReadOnly}, Handler: func(ctx context.Context, user auth.User, args json.RawMessage) (string, error) {
 		a, err := loadAccounts(ctx, db, user.Login)
 		if err != nil {
 			return "", err
@@ -29,7 +29,7 @@ func registerTools(mux *http.ServeMux, db *sql.DB, syncer *synchronizer, queue f
 		b, _ := json.MarshalIndent(a, "", "  ")
 		return string(b), nil
 	}})
-	web.Tool(mux, web.ToolDef{Name: "list_calendars", Description: "List the user's provider calendars, ids, selection, and write access.", Schema: schema(map[string]any{}), Handler: func(ctx context.Context, user auth.User, args json.RawMessage) (string, error) {
+	web.Tool(mux, web.ToolDef{Name: "list_calendars", Description: "List the user's provider calendars, ids, selection, and write access.", Schema: schema(map[string]any{}), Automation: web.AutomationPolicy{Mode: web.AutomationReadOnly}, Handler: func(ctx context.Context, user auth.User, args json.RawMessage) (string, error) {
 		c, err := loadCalendars(ctx, db, user.Login)
 		if err != nil {
 			return "", err
@@ -37,7 +37,7 @@ func registerTools(mux *http.ServeMux, db *sql.DB, syncer *synchronizer, queue f
 		b, _ := json.MarshalIndent(c, "", "  ")
 		return string(b), nil
 	}})
-	web.Tool(mux, web.ToolDef{Name: "list_events", Description: "List calendar events in a time range using local RFC3339 timestamps.", Schema: schema(map[string]any{"from": map[string]any{"type": "string", "description": "RFC3339; default now"}, "to": map[string]any{"type": "string", "description": "RFC3339; default three months from now"}}), Handler: func(ctx context.Context, user auth.User, args json.RawMessage) (string, error) {
+	web.Tool(mux, web.ToolDef{Name: "list_events", Description: "List calendar events in a time range using local RFC3339 timestamps.", Schema: schema(map[string]any{"from": map[string]any{"type": "string", "description": "RFC3339; default now"}, "to": map[string]any{"type": "string", "description": "RFC3339; default three months from now"}}), Automation: web.AutomationPolicy{Mode: web.AutomationReadOnly}, Handler: func(ctx context.Context, user auth.User, args json.RawMessage) (string, error) {
 		var a struct{ From, To string }
 		_ = json.Unmarshal(args, &a)
 		from := time.Now()
@@ -88,11 +88,13 @@ func registerTools(mux *http.ServeMux, db *sql.DB, syncer *synchronizer, queue f
 		if err != nil {
 			return "", errorsf("end must be RFC3339")
 		}
-		id, err := createLocalEvent(ctx, db, user.Login, eventInput{CalendarID: a.CalendarID, Title: a.Title, Start: start, End: end, Description: a.Description, Location: a.Location, Timezone: start.Location().String(), Recurrence: a.Recurrence})
+		in := eventInput{CalendarID: a.CalendarID, Title: a.Title, Start: start, End: end, Description: a.Description, Location: a.Location, Timezone: start.Location().String(), Recurrence: a.Recurrence}
+		id, err := createLocalEvent(ctx, db, user.Login, in)
 		if err != nil {
 			return "", err
 		}
 		web.Changed(user.Login)
+		publishMutation(ctx, user, "calendar.event.created", id, in, "tool")
 		queueEventAccount(ctx, db, user.Login, id, queue)
 		return fmt.Sprintf("Created event #%d: %s", id, a.Title), nil
 	}})
@@ -118,11 +120,13 @@ func registerTools(mux *http.ServeMux, db *sql.DB, syncer *synchronizer, queue f
 		if err != nil {
 			return "", errorsf("end must be RFC3339")
 		}
-		err = updateLocalEvent(ctx, db, user.Login, a.ID, eventInput{CalendarID: a.CalendarID, Title: a.Title, Start: start, End: end, Description: a.Description, Location: a.Location, Timezone: start.Location().String(), Recurrence: a.Recurrence})
+		in := eventInput{CalendarID: a.CalendarID, Title: a.Title, Start: start, End: end, Description: a.Description, Location: a.Location, Timezone: start.Location().String(), Recurrence: a.Recurrence}
+		err = updateLocalEvent(ctx, db, user.Login, a.ID, in)
 		if err != nil {
 			return "", err
 		}
 		web.Changed(user.Login)
+		publishMutation(ctx, user, "calendar.event.updated", a.ID, in, "tool")
 		queueEventAccount(ctx, db, user.Login, a.ID, queue)
 		return fmt.Sprintf("Updated event #%d.", a.ID), nil
 	}})
