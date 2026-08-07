@@ -30,9 +30,10 @@ process, and subdomain, and the source picks it.
 - **Talks to** Google (`accounts.google.com`, `oauth2.googleapis.com`,
   `www.googleapis.com`) and Apple (`caldav.icloud.com`) — only the accounts you
   connect, and only to sync calendars and events.
-- **Publishes** domain events and in-app notifications to your own platformd
-  (sync failures, newly imported events, account disconnects) — they never
-  leave your instance.
+- **Publishes** domain events and in-app notifications to your own platformd —
+  the exact types, fields, and suppression rules are in
+  [Events and automation](#events-and-automation). They never leave your
+  instance.
 - **Never** sends your calendar anywhere else.
 
 Set `BESPOKE_CALENDAR_KEY` (32 random bytes, base64) and the Google OAuth client
@@ -42,6 +43,73 @@ or every other app can read them.
 Like every Bespoke app it runs as your user, so nothing above is *enforced* by
 the platform — it is a description you can check against the source
 ([ADR-0031](https://github.com/bketelsen/bespoke/blob/main/docs/adr/0031-third-party-app-packages.md)).
+
+## Events and automation
+
+The app publishes domain events to your instance's platformd, which stores
+them durably, shows their notifications in the platform inbox, and matches
+automation rules against them
+([ADR-0035](https://github.com/bketelsen/bespoke/blob/main/docs/adr/0035-durable-events-notifications-automations.md)).
+Rules match on the exact `type` string and on condition paths under `data`, so
+the names below are the contract. Events publish only after the local mutation
+committed; a failed publish is logged and never rolls back or blocks the
+mutation it describes.
+
+| Type | Fires when | Notification | `data` fields |
+| --- | --- | --- | --- |
+| `calendar.event.imported` | a sync stores a remote event never seen locally | future-start only, first 10 per sync | `id`, `title`, `calendar`, `start` |
+| `calendar.event.created` | the owner creates an event in the UI or via a tool | never — silent | `id`, `title`, `start`, `calendar_id`, `source` |
+| `calendar.event.updated` | the owner edits an event in the UI or via a tool | never — silent | `id`, `title`, `start`, `calendar_id`, `source` |
+| `calendar.account.connected` | Google OAuth completes or an iCloud account is added | never — silent | `account_id`, `provider`, `email` |
+| `calendar.account.disconnected` | the owner disconnects an account | always | `account_id`, `provider`, `email` |
+| `calendar.account.sync_failed` | an account's sync newly fails (non-error → error) | always | `account_id`, `provider`, `email`, `detail` |
+
+Every event also carries the standard envelope: `id`, `type`, `subject_id`
+(the event or account ID as a string), `occurred_at`, `data`, and a `source`
+of `calendar`.
+
+What a rule can rely on:
+
+- **`calendar.event.imported` means a remote-origin event the app has never
+  stored.** Each incoming event is checked against the local
+  `(calendar_id, remote_id)` identity before the write, so refreshes of known
+  events are updates, and a locally created event echoed back after its push —
+  its remote identifier rewritten to the provider's — never fires an import.
+- **An account's first sync is suppressed entirely.** Until an account has a
+  successful sync on record, imports publish nothing at all, so connecting an
+  account cannot flood the event log or inbox with up to three years of
+  backfilled history.
+- **Import notifications are capped; events are not.** Only imports whose
+  start is in the future attach a notification — title `New event: <title>`,
+  body is the local start time (or all-day date) plus the calendar name, path
+  `/`, group key `calendar:imported` — capped at 10 per sync; every further
+  import in that sync still publishes, silently. `data.start` is the UTC
+  RFC 3339 start, or the plain `YYYY-MM-DD` date for all-day events.
+- **`calendar.event.created` and `calendar.event.updated` are local-origin
+  only.** They fire from the event form and the `create_event` and
+  `update_event` tools, with `data.source` set to `ui` or `tool`; remote
+  changes arriving by sync never masquerade as them.
+- **`calendar.account.sync_failed` fires once per outage.** It publishes only
+  on the transition into the `error` status, so the 10-minute background
+  poller cannot re-notify while an account stays broken; it can fire again
+  only after a successful sync resets the status. `detail` is the failure text
+  truncated to 300 characters, and the notification (title
+  `Calendar sync failing for <email>`) links to `/settings`.
+- **`calendar.account.disconnected` notifies** (title
+  `Calendar account disconnected`, path `/settings`) because disconnecting
+  also deletes the account's locally synced calendars and events;
+  `calendar.account.connected` is silent.
+
+Notification titles are truncated to 120 bytes and bodies to 500, on rune
+boundaries.
+
+### Tools available to automation
+
+Only the read-only tools opt into automation rules: `list_accounts`,
+`list_calendars`, and `list_events`. The mutating tools — `create_event`,
+`update_event`, `delete_event`, and `sync_accounts` — declare no automation
+policy, so the platform refuses to run them from a rule. An automation can
+read your calendar; it can never create, change, delete, or sync anything.
 
 ## Spec
 
